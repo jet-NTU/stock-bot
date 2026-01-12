@@ -10,7 +10,7 @@ from datetime import datetime
 # --- 設定區 ---
 TELEGRAM_TOKEN = os.environ['TELEGRAM_TOKEN']
 TELEGRAM_CHAT_ID = os.environ['TELEGRAM_CHAT_ID']
-WATCHLIST = ["2330", "0050", "2892"] 
+WATCHLIST = ["2330", "0050", "2892", "3481", "6770"] 
 
 # 設定 Matplotlib 不要在背景執行時跳出視窗 (這行對機器人很重要)
 plt.switch_backend('Agg')
@@ -151,4 +151,5 @@ def job():
 
 # --- 主程式 ---
 if __name__ == "__main__":
+
     job()
