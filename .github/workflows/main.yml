@@ -1,0 +1,30 @@
+name: 每日股票監控
+
+on:
+  schedule:
+    # 設定每天 UTC 時間 05:35 (台灣時間 13:35) 執行
+    - cron: '35 5 * * 1-5' # 1-5 代表週一到週五
+  workflow_dispatch: # 讓你可以手動按按鈕測試
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 下載程式碼
+      uses: actions/checkout@v3
+
+    - name: 設定 Python 環境
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+
+    - name: 安裝套件
+      run: |
+        pip install -r requirements.txt
+
+    - name: 執行監控程式
+      env:
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: python main.py
