@@ -4,7 +4,7 @@ import requests
 import os
 import feedparser
 import matplotlib.pyplot as plt
-import html  # <--- 新增這個標準庫
+import html
 from datetime import datetime
 
 # --- 設定區 ---
@@ -23,17 +23,17 @@ STOCK_CONFIG = {
 
 plt.switch_backend('Agg')
 
-# --- 1. 抓取大盤新聞 (加入消毒) ---
+# --- 1. 抓取大盤新聞 (連結也做消毒) ---
 def get_general_news():
     try:
         rss_url = "https://news.google.com/rss/search?q=台股+大盤&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
         feed = feedparser.parse(rss_url)
         news_list = []
         for entry in feed.entries[:3]:
-            # 關鍵修正：使用 html.escape 防止標題含有特殊符號導致發送失敗
+            # 標題和連結都做消毒，並使用雙引號
             safe_title = html.escape(entry.title)
-            link = entry.link
-            news_list.append(f"📰 <a href='{link}'>{safe_title}</a>")
+            safe_link = html.escape(entry.link)
+            news_list.append(f"📰 <a href=\"{safe_link}\">{safe_title}</a>")
         return "\n".join(news_list)
     except:
         return "無法取得新聞"
@@ -72,22 +72,50 @@ def generate_chart(stock_id, data, fast_p, slow_p):
     plt.close()
     return filename
 
-# --- 4. 發送 Telegram (加入詳細錯誤回報) ---
+# --- 4. 發送 Telegram (加入自動降級機制) ---
 def send_telegram_msg(msg):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("❌ Token 或 Chat ID 未設定")
         return
     
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {'chat_id': TELEGRAM_CHAT_ID, 'text': msg, 'parse_mode': 'HTML', 'disable_web_page_preview': True}
+    
+    # 第 1 次嘗試：發送漂亮的 HTML
+    payload = {
+        'chat_id': TELEGRAM_CHAT_ID, 
+        'text': msg, 
+        'parse_mode': 'HTML', 
+        'disable_web_page_preview': True
+    }
     
     try:
+        print("📤 嘗試發送 HTML 格式日報...")
         resp = requests.post(url, data=payload)
+        
         if resp.status_code == 200:
-            print("✅ 日報發送成功！")
+            print("✅ 日報發送成功 (HTML)！")
+            return
         else:
-            # 這裡會印出為什麼失敗 (例如 400 Bad Request)
-            print(f"❌ 發送失敗: {resp.status_code} - {resp.text}")
+            print(f"⚠️ HTML 發送失敗 ({resp.status_code})，嘗試轉為純文字發送...")
+            print(f"錯誤原因: {resp.text}")
+
+        # 第 2 次嘗試：發送純文字 (移除 parse_mode)
+        # 為了不讓 HTML 標籤直接顯示出來很醜，我們做簡單的替換
+        clean_msg = msg.replace("<b>", "").replace("</b>", "").replace("<pre>", "").replace("</pre>", "").replace("&lt;", "<").replace("&gt;", ">")
+        # 把超連結標籤換成簡單的文字
+        # 這裡不追求完美，只求訊息能傳出去
+        
+        payload_plain = {
+            'chat_id': TELEGRAM_CHAT_ID, 
+            'text': clean_msg
+        }
+        
+        resp_plain = requests.post(url, data=payload_plain)
+        if resp_plain.status_code == 200:
+            print("✅ 日報發送成功 (純文字救援模式)！")
+        else:
+            print(f"❌ 純文字也失敗: {resp_plain.text}")
+
     except Exception as e:
         print(f"❌ 連線錯誤: {e}")
 
@@ -192,5 +220,9 @@ if __name__ == "__main__":
             f"{general_news}"
         )
         
+        # 這裡現在會自動處理失敗的情況
+        send_telegram_msg(final_report)
+        
         # 這裡會印出是否成功，如果失敗會印出原因
         send_telegram_msg(final_report)
+
