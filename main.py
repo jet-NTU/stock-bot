@@ -5,6 +5,7 @@ import schedule
 import time
 import matplotlib.pyplot as plt
 import os # 用來刪除暫存圖片
+import feedparser
 from datetime import datetime
 
 # --- 設定區 ---
@@ -23,6 +24,35 @@ def calculate_rsi(data, window=14):
     rs = gain / loss
     rsi = 100 - (100 / (1 + rs))
     return rsi
+
+# --- 抓新聞 ---
+def get_stock_news(stock_id):
+    """
+    使用 Google News RSS 抓取個股新聞
+    """
+    # 設定搜尋關鍵字，例如 "2330 台灣" 確保抓到的是台股新聞
+    rss_url = f"https://news.google.com/rss/search?q={stock_id}+TW&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
+    
+    try:
+        # 解析 RSS
+        feed = feedparser.parse(rss_url)
+        news_list = []
+        
+        # 只抓最新的 3 則
+        for entry in feed.entries[:3]:
+            title = entry.title
+            link = entry.link
+            # 使用 HTML 格式讓標題變成可點擊的超連結
+            news_item = f"📰 <a href='{link}'>{title}</a>"
+            news_list.append(news_item)
+            
+        if not news_list:
+            return "無相關近期新聞"
+            
+        return "\n".join(news_list)
+        
+    except Exception as e:
+        return f"新聞抓取失敗: {e}"
 
 # --- 2. 產生圖表並存檔函數 ---
 def generate_chart(stock_id, data):
@@ -86,98 +116,80 @@ def check_stock_signal(stock_id):
     
     # 抓取資料
     data = yf.Ticker(ticker).history(period="3mo")
-    
-    if len(data) < 20:
-        return
+    if len(data) < 20: return
 
-    # --- 1. 計算技術指標 ---
-    # 價格均線
+    # 計算指標 (MA, RSI, Volume)
     data['MA5'] = data['Close'].rolling(window=5).mean()
     data['MA20'] = data['Close'].rolling(window=20).mean()
-    # RSI
     data['RSI'] = calculate_rsi(data)
-    
-    # [新增] 成交量均線 (5日均量)
     data['VolMA5'] = data['Volume'].rolling(window=5).mean()
 
-    # --- 2. 取得數據 ---
-    # 今天的數據
+    # 取得今日數據
     today = data.iloc[-1]
     today_close = today['Close']
     today_rsi = today['RSI']
-    today_vol = today['Volume']     # 今天成交量
-    today_vol_ma = today['VolMA5']  # 5日平均成交量
+    today_vol = today['Volume']
+    today_vol_ma = today['VolMA5']
     
     ma5_today = today['MA5']
     ma20_today = today['MA20']
     
-    # 昨天的數據
     yesterday = data.iloc[-2]
     ma5_yesterday = yesterday['MA5']
     ma20_yesterday = yesterday['MA20']
     
-    date_str = str(data.index[-1].date())
-    
-    # --- 3. 計算量能狀況 ---
-    # 避免除以 0 的錯誤
+    # 計算量能比
     if today_vol_ma > 0:
         vol_ratio = today_vol / today_vol_ma
     else:
         vol_ratio = 0
-        
-    # 設定爆量標準：今天量 > 5日均量 * 1.5倍
     is_volume_surge = vol_ratio >= 1.5
 
     msg = ""
     signal_triggered = False
-    signal_type = "" # 紀錄訊號類型 (買/賣)
 
-    # --- 4. 訊號判斷邏輯 ---
+    # --- 訊號判斷 ---
     
-    # A. 黃金交叉 (買進訊號)
+    # 1. 黃金交叉
     if ma5_today > ma20_today and ma5_yesterday <= ma20_yesterday:
-        signal_type = "BUY"
-        
-        # 這裡我們做一個「分級」：
-        # 如果有爆量 -> 顯示「強烈買進」
-        # 如果沒爆量 -> 顯示「普通買進 (量能不足)」
         if is_volume_surge:
-            status = "🔥 <b>強勢黃金交叉 (價漲量增)</b>"
-            advice = "主力進場，訊號可信度高！"
+            status = "🔥 <b>強勢黃金交叉 (爆量)</b>"
+            advice = "主力進場，配合新聞確認利多！"
         else:
-            status = "⚠️ <b>弱勢黃金交叉 (量能不足)</b>"
-            advice = "成交量未放大，建議縮小部位或觀望。"
-
+            status = "⚠️ <b>弱勢黃金交叉 (無量)</b>"
+            advice = "量能不足，需觀察是否為假突破。"
+            
         msg = (f"{status}\n"
                f"標的: {stock_id}\n"
-               f"日期: {date_str}\n"
                f"收盤: {today_close:.2f}\n"
                f"RSI: {today_rsi:.2f}\n"
-               f"------------------\n"
-               f"成交量: {int(today_vol/1000)} 張\n"
-               f"均量比: {vol_ratio:.2f} 倍 (標準1.5)\n"
+               f"量能: {vol_ratio:.2f} 倍\n"
                f"💡 建議: {advice}")
         signal_triggered = True
 
-    # B. 死亡交叉 (賣出訊號)
+    # 2. 死亡交叉
     elif ma5_today < ma20_today and ma5_yesterday >= ma20_yesterday:
-        signal_type = "SELL"
-        msg = (f"📉 <b>死亡交叉 (建議出場)</b>\n"
+        msg = (f"📉 <b>死亡交叉 (快逃)</b>\n"
                f"標的: {stock_id}\n"
-               f"日期: {date_str}\n"
                f"收盤: {today_close:.2f}\n"
-               f"MA5 跌破 MA20")
+               f"建議: 獲利了結或停損出場。")
         signal_triggered = True
 
-    # --- 5. 發送通知 ---
+    # --- 發送階段 ---
     if signal_triggered:
-        print(f"發現訊號: {stock_id} ({signal_type})")
+        print(f"發現訊號: {stock_id}，正在抓取新聞...")
         
-        # 畫圖
+        # A. 抓新聞 (只有觸發訊號時才抓，節省資源)
+        news_content = get_stock_news(stock_id)
+        
+        # B. 組合最終訊息
+        final_msg = f"{msg}\n\n<b>==== 相關新聞 ====</b>\n{news_content}"
+        
+        # C. 畫圖
         img_path = generate_chart(stock_id, data)
         
-        # 發送圖片 + 詳細訊息
-        send_telegram_photo(msg, img_path)
+        # D. 發送
+        send_telegram_photo(final_msg, img_path)
         
         if os.path.exists(img_path):
             os.remove(img_path)
@@ -197,4 +209,5 @@ def job():
 if __name__ == "__main__":
 
     job()
+
 
