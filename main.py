@@ -3,7 +3,7 @@ import pandas as pd
 import requests
 import os
 import feedparser
-import matplotlib.pyplot as plt
+import mplfinance as mpf  # 專業財經繪圖
 import html
 from datetime import datetime
 
@@ -21,7 +21,8 @@ STOCK_CONFIG = {
     "3481": {"fast": 20, "slow": 50, "name": "群創"},
 }
 
-plt.switch_backend('Agg')
+# 設定 K 線圖樣式 (使用類似 Yahoo 財經的風格)
+MC_STYLE = mpf.make_mpf_style(base_mpf_style='yahoo', rc={'font.size': 10})
 
 # --- 1. 抓取大盤新聞 ---
 def get_news_data():
@@ -30,10 +31,7 @@ def get_news_data():
         feed = feedparser.parse(rss_url)
         news_data = []
         for entry in feed.entries[:3]:
-            news_data.append({
-                "title": entry.title,
-                "link": entry.link
-            })
+            news_data.append({"title": entry.title, "link": entry.link})
         return news_data
     except:
         return []
@@ -46,92 +44,78 @@ def calculate_rsi(data, window=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-# --- 3. 繪圖 ---
+# --- 3. 專業繪圖 (K線圖 + 均線 + 成交量) ---
 def generate_chart(stock_id, data, fast_p, slow_p):
-    filename = f"{stock_id}_chart.png"
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 8), gridspec_kw={'height_ratios': [3, 1]})
+    filename = f"{stock_id}_kline.png"
     
-    col_fast = f'MA{fast_p}'
-    col_slow = f'MA{slow_p}'
+    # 準備均線資料 (mplfinance 需要 list 或 series)
+    # 我們只取最後 60 天來畫，比較清楚
+    plot_data = data.iloc[-80:] 
+    
+    # 設定均線 (mav)
+    # 設定副圖 (RSI) - 這裡為了版面乾淨，我們先只畫 K線+均線+成交量
+    # 如果要畫 RSI 可以用 addplot，但 K 線圖本身資訊量就很大了
+    
+    apds = [
+        mpf.make_addplot(plot_data[f'MA{fast_p}'], color='magenta', width=1.5),
+        mpf.make_addplot(plot_data[f'MA{slow_p}'], color='blue', width=2),
+    ]
 
-    ax1.set_title(f"{stock_id} Analysis")
-    ax1.plot(data.index, data['Close'], label='Price', color='black', alpha=0.6)
-    ax1.plot(data.index, data[col_fast], label=f'MA{fast_p}', color='magenta', linewidth=1.5)
-    ax1.plot(data.index, data[col_slow], label=f'MA{slow_p}', color='blue', linewidth=2)
-    ax1.legend()
-    ax1.grid(True)
+    # 繪圖
+    mpf.plot(
+        plot_data,
+        type='candle',       # K線圖
+        style=MC_STYLE,      # 風格
+        title=f"\n{stock_id} Trend (MA{fast_p}/MA{slow_p})",
+        ylabel='Price',
+        volume=True,         # 開啟成交量
+        addplot=apds,        # 加入均線
+        savefig=filename,    # 存檔
+        tight_layout=True,
+        figratio=(10, 6),
+        figscale=1.2
+    )
     
-    ax2.plot(data.index, data['RSI'], label='RSI', color='purple')
-    ax2.axhline(70, color='red', linestyle='--', alpha=0.5)
-    ax2.axhline(30, color='green', linestyle='--', alpha=0.5)
-    ax2.set_ylim(0, 100)
-    ax2.grid(True)
-    
-    plt.tight_layout()
-    plt.savefig(filename)
-    plt.close()
     return filename
 
-# --- 4. 發送 Telegram (修復連結轉義問題) ---
+# --- 4. 發送 Telegram ---
 def send_report(html_msg, text_msg):
-    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
-        print("❌ Token 或 Chat ID 未設定")
-        return
-    
+    if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID: return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     
-    # 嘗試發送 HTML 版
-    payload_html = {
-        'chat_id': TELEGRAM_CHAT_ID, 
-        'text': html_msg, 
-        'parse_mode': 'HTML', 
-        'disable_web_page_preview': True
-    }
-    
+    # HTML 版
     try:
-        print("📤 嘗試發送 HTML 日報...")
-        resp = requests.post(url, data=payload_html)
-        
-        if resp.status_code == 200:
-            print("✅ HTML 日報發送成功！")
-            return
-        else:
-            print(f"⚠️ HTML 失敗 ({resp.status_code})，原因: {resp.text}")
-            print("🔄 轉用純文字版重試...")
-
-        # 失敗則發送純文字版
-        payload_text = {
-            'chat_id': TELEGRAM_CHAT_ID, 
-            'text': text_msg,
-            'disable_web_page_preview': True
-        }
-        
-        resp_text = requests.post(url, data=payload_text)
-        if resp_text.status_code == 200:
-            print("✅ 純文字日報救援發送成功！")
-        else:
-            print(f"❌ 全部失敗: {resp_text.text}")
-
-    except Exception as e:
-        print(f"❌ 連線錯誤: {e}")
+        requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'text': html_msg, 'parse_mode': 'HTML', 'disable_web_page_preview': True})
+    except:
+        # 失敗轉純文字
+        requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'text': text_msg, 'disable_web_page_preview': True})
 
 def send_telegram_photo(msg, image_path):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID: return
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
     with open(image_path, 'rb') as img_file:
-        try: 
-            requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'caption': msg, 'parse_mode': 'HTML'}, files={'photo': img_file})
+        try: requests.post(url, data={'chat_id': TELEGRAM_CHAT_ID, 'caption': msg, 'parse_mode': 'HTML'}, files={'photo': img_file})
         except: pass
 
-# --- 5. 核心分析 ---
+# --- 5. 核心分析 (含基本面) ---
 def analyze_stock(stock_id, config):
     ticker = f"{stock_id}.TW"
     FAST_MA = config['fast']
     SLOW_MA = config['slow']
     NAME = config['name']
     
-    data = yf.Ticker(ticker).history(period="6mo")
+    # 取得股價資料
+    stock_obj = yf.Ticker(ticker)
+    data = stock_obj.history(period="6mo")
     if len(data) < SLOW_MA: return None
+
+    # 取得基本面資料 (本益比)
+    # 注意：有些 ETF 或虧損公司沒有 PE，需做例外處理
+    try:
+        pe_ratio = stock_obj.info.get('trailingPE', None)
+        pe_str = f"{pe_ratio:.1f}" if pe_ratio else "N/A"
+    except:
+        pe_str = "N/A"
 
     col_fast = f'MA{FAST_MA}'
     col_slow = f'MA{SLOW_MA}'
@@ -160,6 +144,7 @@ def analyze_stock(stock_id, config):
         "name": NAME,
         "close": today['Close'],
         "rsi": today['RSI'],
+        "pe": pe_str,  # 新增本益比
         "trend": trend_status,
         "signal": signal,
         "data_obj": data,
@@ -169,95 +154,77 @@ def analyze_stock(stock_id, config):
 
 # --- 主程式 ---
 if __name__ == "__main__":
-    print("--- 產生盤後日報中 ---")
+    print("--- 產生專業戰情日報中 ---")
     
     daily_report_list = []
-    taiex_data = None  # 用來存 0050 的資料
+    taiex_data = None
 
     for stock_id, config in STOCK_CONFIG.items():
         try:
             result = analyze_stock(stock_id, config)
             if result:
                 daily_report_list.append(result)
+                if stock_id == "0050": taiex_data = result
                 
-                # --- 新增：如果是 0050，把資料存起來等一下畫圖 ---
-                if stock_id == "0050":
-                    taiex_data = result
-                
-                # 個股訊號通知 (維持原樣)
                 if result['signal']:
-                    print(f"🚨 {result['name']} 出現訊號")
                     img_path = generate_chart(stock_id, result['data_obj'], result['fast'], result['slow'])
-                    msg = f"{result['signal']} - {result['name']} ({stock_id})\n收盤: {result['close']:.1f}\nRSI: {result['rsi']:.1f}"
+                    msg = f"{result['signal']} - {result['name']}\n收盤: {result['close']:.1f} | PE: {result['pe']}"
                     send_telegram_photo(msg, img_path)
                     if os.path.exists(img_path): os.remove(img_path)
         except Exception as e:
-            print(f"❌ {stock_id} 錯誤: {e}")
+            print(f"❌ {stock_id}: {e}")
             continue
 
-    print("📊 正在彙整日報...")
-    
-    if not daily_report_list:
-        print("❌ 無資料，取消發送。")
-    else:
-        # --- 新增：先發送 0050 大盤圖當作封面 ---
+    if daily_report_list:
+        # 1. 發送 0050 K線圖
         if taiex_data:
-            print("🖼️ 正在繪製 0050 大盤趨勢圖...")
             img_path = generate_chart("0050", taiex_data['data_obj'], taiex_data['fast'], taiex_data['slow'])
-            send_telegram_photo("📊 <b>今日大盤 (0050) 走勢圖</b>", img_path)
+            send_telegram_photo("📊 <b>大盤(0050) K線趨勢</b>", img_path)
             if os.path.exists(img_path): os.remove(img_path)
 
-        # 接著發送原本的文字報表 (維持原樣)
+        # 2. 準備日報
         news_items = get_news_data()
         today_date = datetime.now().strftime("%Y-%m-%d")
 
-        # ... (下面產生 html_msg 和 text_msg 的程式碼不用動) ...
-        # (請保留原本產生 HTML 和純文字報表的邏輯)
-        
-        # 為了完整性，這裡補上原本的報表產生邏輯
-        html_news_section = ""
-        for item in news_items:
-            safe_title = html.escape(item['title'], quote=True)
-            safe_link = html.escape(item['link'], quote=True)
-            html_news_section += f"📰 <a href=\"{safe_link}\">{safe_title}</a>\n\n"
-        if not html_news_section: html_news_section = "無重點新聞"
-
-        html_table = "股名   收盤  RSI 趨\n"
-        html_table += "-" * 23 + "\n"
+        # HTML 表格 (新增 PE 欄位)
+        html_table = "股名  收盤  RSI  PE  趨\n"
+        html_table += "-" * 26 + "\n"
         for item in daily_report_list:
-            name_short = item['name'][:3]
-            trend_icon = "📈" if item['trend'] == "多" else "📉"
-            html_table += f"{name_short:<4} {item['close']:<5.0f} {item['rsi']:<3.0f} {trend_icon}\n"
+            name = item['name'][:3]
+            trend = "📈" if item['trend'] == "多" else "📉"
+            # 調整間距以適應手機畫面
+            html_table += f"{name:<3} {item['close']:<5.0f} {item['rsi']:<3.0f} {item['pe']:<4} {trend}\n"
+
+        html_news = ""
+        for item in news_items:
+            t = html.escape(item['title'], quote=True)
+            l = html.escape(item['link'], quote=True)
+            html_news += f"📰 <a href=\"{l}\">{t}</a>\n\n"
+        if not html_news: html_news = "無新聞"
 
         html_msg = (
-            f"📅 <b>盤後戰情 ({today_date})</b>\n\n"
+            f"📅 <b>戰情日報 ({today_date})</b>\n\n"
             f"<pre>{html_table}</pre>\n"
-            f"💡 <b>觀察重點：</b>\n"
-            f"RSI > 80 過熱 | RSI < 30 超賣\n\n"
-            f"<b>【今日頭條】</b>\n"
-            f"{html_news_section}"
+            f"💡 PE=本益比 | 📈=多頭\n\n"
+            f"<b>【今日頭條】</b>\n{html_news}"
         )
 
-        text_news_section = ""
-        for item in news_items:
-            text_news_section += f"📰 {item['title']}\n------------------\n"
-        if not text_news_section: text_news_section = "無重點新聞"
-
-        text_table = "股名   收盤   RSI  趨勢\n"
-        text_table += "------------------------\n"
+        # 純文字表格 (備用)
+        text_table = "股名  收盤   PE   趨勢\n"
+        text_table += "----------------------\n"
         for item in daily_report_list:
-            name_short = item['name'][:3]
-            trend_txt = "多" if item['trend'] == "多" else "空"
-            text_table += f"{name_short}   {item['close']:.0f}    {item['rsi']:.0f}   {trend_txt}\n"
+            name = item['name'][:3]
+            text_table += f"{name}  {item['close']:.0f}   {item['pe']}   {item['trend']}\n"
 
-        text_msg = (
-            f"📅 盤後戰情 ({today_date})\n\n"
-            f"{text_table}\n"
-            f"【今日頭條】\n"
-            f"{text_news_section}"
-            f"(純文字模式)"
-        )
+        text_news = ""
+        for item in news_items:
+            text_news += f"📰 {item['title']}\n------------------\n"
+
+        text_msg = f"📅 戰情 ({today_date})\n\n{text_table}\n【新聞】\n{text_news}(純文字版)"
 
         send_report(html_msg, text_msg)
+        print("✅ 專業日報已發送！")
+        send_report(html_msg, text_msg)
+
 
 
