@@ -23,9 +23,8 @@ STOCK_CONFIG = {
 
 plt.switch_backend('Agg')
 
-# --- 1. 抓取大盤新聞 (回傳原始資料，不做格式化) ---
+# --- 1. 抓取大盤新聞 ---
 def get_news_data():
-    """回傳新聞標題與連結的清單"""
     try:
         rss_url = "https://news.google.com/rss/search?q=台股+大盤&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
         feed = feedparser.parse(rss_url)
@@ -73,7 +72,7 @@ def generate_chart(stock_id, data, fast_p, slow_p):
     plt.close()
     return filename
 
-# --- 4. 發送 Telegram (雙版本機制) ---
+# --- 4. 發送 Telegram (修復連結轉義問題) ---
 def send_report(html_msg, text_msg):
     if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
         print("❌ Token 或 Chat ID 未設定")
@@ -81,7 +80,7 @@ def send_report(html_msg, text_msg):
     
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     
-    # [劇本 A] 優先嘗試華麗 HTML 版
+    # 嘗試發送 HTML 版
     payload_html = {
         'chat_id': TELEGRAM_CHAT_ID, 
         'text': html_msg, 
@@ -97,10 +96,10 @@ def send_report(html_msg, text_msg):
             print("✅ HTML 日報發送成功！")
             return
         else:
-            print(f"⚠️ HTML 失敗 ({resp.status_code})，轉用純文字版...")
-            # print(f"除錯訊息: {resp.text}") # 如果想看詳細錯誤可打開
+            print(f"⚠️ HTML 失敗 ({resp.status_code})，原因: {resp.text}")
+            print("🔄 轉用純文字版重試...")
 
-        # [劇本 B] 失敗則發送乾淨純文字版
+        # 失敗則發送純文字版
         payload_text = {
             'chat_id': TELEGRAM_CHAT_ID, 
             'text': text_msg,
@@ -174,7 +173,6 @@ if __name__ == "__main__":
     
     daily_report_list = []
 
-    # 1. 分析個股
     for stock_id, config in STOCK_CONFIG.items():
         try:
             result = analyze_stock(stock_id, config)
@@ -195,31 +193,26 @@ if __name__ == "__main__":
     if not daily_report_list:
         print("❌ 無資料，取消發送。")
     else:
-        # 2. 準備新聞資料
         news_items = get_news_data()
         today_date = datetime.now().strftime("%Y-%m-%d")
 
         # ==========================================
-        # 🎬 劇本 A: 華麗 HTML 版 (含表格、隱藏連結)
+        # 🎬 劇本 A: HTML 版 (修正連結 Bug)
         # ==========================================
-        
-        # 製作新聞區塊 (HTML)
         html_news_section = ""
         for item in news_items:
-            # 這裡做最嚴格的特殊字元處理
+            # 重點修正：link 也要 escape！
             safe_title = html.escape(item['title'], quote=True)
-            safe_link = item['link']
+            safe_link = html.escape(item['link'], quote=True) 
             html_news_section += f"📰 <a href='{safe_link}'>{safe_title}</a>\n"
         
         if not html_news_section: html_news_section = "無重點新聞"
 
-        # 製作表格 (HTML <pre>)
         html_table = "股名   收盤  RSI 趨\n"
         html_table += "-" * 23 + "\n"
         for item in daily_report_list:
             name_short = item['name'][:3]
             trend_icon = "📈" if item['trend'] == "多" else "📉"
-            # 格式化對齊
             html_table += f"{name_short:<4} {item['close']:<5.0f} {item['rsi']:<3.0f} {trend_icon}\n"
 
         html_msg = (
@@ -232,32 +225,33 @@ if __name__ == "__main__":
         )
 
         # ==========================================
-        # 🎬 劇本 B: 乾淨純文字版 (無標籤、無亂碼)
+        # 🎬 劇本 B: 純文字版 (美化排版)
         # ==========================================
-        
-        # 製作新聞區塊 (Text) - 直接列出標題，不要連結(因為太長)，或換行顯示
         text_news_section = ""
         for item in news_items:
-            text_news_section += f"📰 {item['title']}\n"
+            # 加上 \n\n 讓新聞之間有空行，閱讀更舒適
+            text_news_section += f"📰 {item['title']}\n\n"
         
         if not text_news_section: text_news_section = "無重點新聞"
 
-        # 製作表格 (Text - 盡量對齊但不強求)
         text_table = "股名   收盤   RSI  趨勢\n"
         text_table += "------------------------\n"
         for item in daily_report_list:
             name_short = item['name'][:3]
             trend_txt = "多" if item['trend'] == "多" else "空"
-            # 純文字無法用 pixel 對齊，只能用全形空白調整，這裡採簡單列出
             text_table += f"{name_short}   {item['close']:.0f}    {item['rsi']:.0f}   {trend_txt}\n"
 
         text_msg = (
             f"📅 盤後戰情 ({today_date})\n\n"
             f"{text_table}\n"
             f"【今日頭條】\n"
-            f"{text_news_section}\n"
-            f"(HTML顯示失敗，已切換為純文字模式)"
+            f"{text_news_section}"
+            f"(純文字模式)"
         )
+
+        # 發送
+        send_report(html_msg, text_msg)
 
         # 3. 發送 (自動選擇劇本)
         send_report(html_msg, text_msg)
+
