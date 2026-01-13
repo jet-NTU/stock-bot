@@ -172,12 +172,19 @@ if __name__ == "__main__":
     print("--- 產生盤後日報中 ---")
     
     daily_report_list = []
+    taiex_data = None  # 用來存 0050 的資料
 
     for stock_id, config in STOCK_CONFIG.items():
         try:
             result = analyze_stock(stock_id, config)
             if result:
                 daily_report_list.append(result)
+                
+                # --- 新增：如果是 0050，把資料存起來等一下畫圖 ---
+                if stock_id == "0050":
+                    taiex_data = result
+                
+                # 個股訊號通知 (維持原樣)
                 if result['signal']:
                     print(f"🚨 {result['name']} 出現訊號")
                     img_path = generate_chart(stock_id, result['data_obj'], result['fast'], result['slow'])
@@ -193,19 +200,26 @@ if __name__ == "__main__":
     if not daily_report_list:
         print("❌ 無資料，取消發送。")
     else:
+        # --- 新增：先發送 0050 大盤圖當作封面 ---
+        if taiex_data:
+            print("🖼️ 正在繪製 0050 大盤趨勢圖...")
+            img_path = generate_chart("0050", taiex_data['data_obj'], taiex_data['fast'], taiex_data['slow'])
+            send_telegram_photo("📊 <b>今日大盤 (0050) 走勢圖</b>", img_path)
+            if os.path.exists(img_path): os.remove(img_path)
+
+        # 接著發送原本的文字報表 (維持原樣)
         news_items = get_news_data()
         today_date = datetime.now().strftime("%Y-%m-%d")
 
-        # ==========================================
-        # 🎬 劇本 A: HTML 版 (修正連結 Bug)
-        # ==========================================
+        # ... (下面產生 html_msg 和 text_msg 的程式碼不用動) ...
+        # (請保留原本產生 HTML 和純文字報表的邏輯)
+        
+        # 為了完整性，這裡補上原本的報表產生邏輯
         html_news_section = ""
         for item in news_items:
-            # 重點修正：link 也要 escape！
             safe_title = html.escape(item['title'], quote=True)
-            safe_link = html.escape(item['link'], quote=True) 
-            html_news_section += f"📰 <a href='{safe_link}'>{safe_title}</a>\n"
-        
+            safe_link = html.escape(item['link'], quote=True)
+            html_news_section += f"📰 <a href=\"{safe_link}\">{safe_title}</a>\n\n"
         if not html_news_section: html_news_section = "無重點新聞"
 
         html_table = "股名   收盤  RSI 趨\n"
@@ -224,14 +238,9 @@ if __name__ == "__main__":
             f"{html_news_section}"
         )
 
-        # ==========================================
-        # 🎬 劇本 B: 純文字版 (美化排版)
-        # ==========================================
         text_news_section = ""
         for item in news_items:
-            # 加上 \n\n 讓新聞之間有空行，閱讀更舒適
-            text_news_section += f"📰 {item['title']}\n\n"
-        
+            text_news_section += f"📰 {item['title']}\n------------------\n"
         if not text_news_section: text_news_section = "無重點新聞"
 
         text_table = "股名   收盤   RSI  趨勢\n"
@@ -249,9 +258,6 @@ if __name__ == "__main__":
             f"(純文字模式)"
         )
 
-        # 發送
         send_report(html_msg, text_msg)
 
-        # 3. 發送 (自動選擇劇本)
-        send_report(html_msg, text_msg)
 
