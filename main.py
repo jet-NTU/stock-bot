@@ -13,7 +13,7 @@ TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID')
 
 # 監控清單
-WATCHLIST = ["2330", "0050", "2892", "3481", "6770"] 
+WATCHLIST = ["2330", "0050", "2892", "3481", "6770", "3711", "1605", "3037", "2379"] 
 
 # 設定繪圖後端 (避免雲端執行時報錯)
 plt.switch_backend('Agg')
@@ -198,3 +198,4 @@ if __name__ == "__main__":
         check_stock_signal(stock)
             
     print("--- 檢查完畢 ---")
+
