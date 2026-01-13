@@ -84,57 +84,101 @@ def check_stock_signal(stock_id):
     ticker = f"{stock_id}.TW"
     print(f"檢查中: {stock_id}...")
     
-    # 抓取資料 (抓 3 個月讓圖表好看一點)
+    # 抓取資料
     data = yf.Ticker(ticker).history(period="3mo")
     
     if len(data) < 20:
         return
 
-    # 計算指標
+    # --- 1. 計算技術指標 ---
+    # 價格均線
     data['MA5'] = data['Close'].rolling(window=5).mean()
     data['MA20'] = data['Close'].rolling(window=20).mean()
+    # RSI
     data['RSI'] = calculate_rsi(data)
-
-    # 取得最新數據
-    today_close = data.iloc[-1]['Close']
-    today_rsi = data.iloc[-1]['RSI']
-    ma5_today = data.iloc[-1]['MA5']
-    ma20_today = data.iloc[-1]['MA20']
     
-    ma5_yesterday = data.iloc[-2]['MA5']
-    ma20_yesterday = data.iloc[-2]['MA20']
+    # [新增] 成交量均線 (5日均量)
+    data['VolMA5'] = data['Volume'].rolling(window=5).mean()
+
+    # --- 2. 取得數據 ---
+    # 今天的數據
+    today = data.iloc[-1]
+    today_close = today['Close']
+    today_rsi = today['RSI']
+    today_vol = today['Volume']     # 今天成交量
+    today_vol_ma = today['VolMA5']  # 5日平均成交量
+    
+    ma5_today = today['MA5']
+    ma20_today = today['MA20']
+    
+    # 昨天的數據
+    yesterday = data.iloc[-2]
+    ma5_yesterday = yesterday['MA5']
+    ma20_yesterday = yesterday['MA20']
     
     date_str = str(data.index[-1].date())
+    
+    # --- 3. 計算量能狀況 ---
+    # 避免除以 0 的錯誤
+    if today_vol_ma > 0:
+        vol_ratio = today_vol / today_vol_ma
+    else:
+        vol_ratio = 0
+        
+    # 設定爆量標準：今天量 > 5日均量 * 1.5倍
+    is_volume_surge = vol_ratio >= 1.5
+
     msg = ""
     signal_triggered = False
+    signal_type = "" # 紀錄訊號類型 (買/賣)
 
-    # 訊號判斷
+    # --- 4. 訊號判斷邏輯 ---
+    
+    # A. 黃金交叉 (買進訊號)
     if ma5_today > ma20_today and ma5_yesterday <= ma20_yesterday:
-        msg = (f"🚀 <b>{stock_id} 黃金交叉 (買進)</b>\n"
+        signal_type = "BUY"
+        
+        # 這裡我們做一個「分級」：
+        # 如果有爆量 -> 顯示「強烈買進」
+        # 如果沒爆量 -> 顯示「普通買進 (量能不足)」
+        if is_volume_surge:
+            status = "🔥 <b>強勢黃金交叉 (價漲量增)</b>"
+            advice = "主力進場，訊號可信度高！"
+        else:
+            status = "⚠️ <b>弱勢黃金交叉 (量能不足)</b>"
+            advice = "成交量未放大，建議縮小部位或觀望。"
+
+        msg = (f"{status}\n"
+               f"標的: {stock_id}\n"
                f"日期: {date_str}\n"
                f"收盤: {today_close:.2f}\n"
                f"RSI: {today_rsi:.2f}\n"
-               f"MA5 穿過 MA20，趨勢向上！")
+               f"------------------\n"
+               f"成交量: {int(today_vol/1000)} 張\n"
+               f"均量比: {vol_ratio:.2f} 倍 (標準1.5)\n"
+               f"💡 建議: {advice}")
         signal_triggered = True
 
+    # B. 死亡交叉 (賣出訊號)
     elif ma5_today < ma20_today and ma5_yesterday >= ma20_yesterday:
-        msg = (f"📉 <b>{stock_id} 死亡交叉 (賣出)</b>\n"
+        signal_type = "SELL"
+        msg = (f"📉 <b>死亡交叉 (建議出場)</b>\n"
+               f"標的: {stock_id}\n"
                f"日期: {date_str}\n"
                f"收盤: {today_close:.2f}\n"
-               f"RSI: {today_rsi:.2f}\n"
-               f"MA5 跌破 MA20，建議避險。")
+               f"MA5 跌破 MA20")
         signal_triggered = True
 
-    # 如果有訊號，就產生圖表並發送
+    # --- 5. 發送通知 ---
     if signal_triggered:
-        print(f"發現訊號！正在繪圖...")
-        # A. 畫圖並存檔
+        print(f"發現訊號: {stock_id} ({signal_type})")
+        
+        # 畫圖
         img_path = generate_chart(stock_id, data)
         
-        # B. 發送圖片 + 文字
+        # 發送圖片 + 詳細訊息
         send_telegram_photo(msg, img_path)
         
-        # C. 刪除暫存圖片 (保持資料夾乾淨)
         if os.path.exists(img_path):
             os.remove(img_path)
     else:
@@ -153,3 +197,4 @@ def job():
 if __name__ == "__main__":
 
     job()
+
