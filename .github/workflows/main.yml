@@ -3,7 +3,6 @@ name: 盤中即時監控 (15分K)
 on:
   schedule:
     # 台灣時間 09:00 ~ 13:45 對應 UTC 時間是 01:00 ~ 05:45
-    # cron 語法: '分 時 日 月 週'
     # */15 代表每 15 分鐘一次
     - cron: '*/15 1-5 * * 1-5' 
   workflow_dispatch: # 允許手動按鈕觸發
@@ -22,14 +21,9 @@ jobs:
         python-version: '3.10'
 
     - name: 安裝套件
+      # 關鍵修正：加上 --pre 以允許安裝 pandas-ta 的 Beta 版
       run: |
         pip install -r requirements.txt --pre
-
-    - name: 執行監控程式
-      env:
-        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      run: python main.py
 
     - name: 執行監控程式
       env:
