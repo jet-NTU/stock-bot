@@ -4,7 +4,8 @@ matplotlib
 feedparser
 requests
 mplfinance
-pandas-ta==0.3.14b0
+https://github.com/twopirllc/pandas-ta/archive/development.zip
+
 
 
 
