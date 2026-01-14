@@ -1,10 +1,12 @@
-name: 每日股票監控
+name: 盤中即時監控 (15分K)
 
 on:
   schedule:
-    # 設定每天 UTC 時間 04:45 (台灣時間 12:45) 執行
-    - cron: '45 4 * * 1-5' # 1-5 代表週一到週五
-  workflow_dispatch: # 讓你可以手動按按鈕測試
+    # 台灣時間 09:00 ~ 13:45 對應 UTC 時間是 01:00 ~ 05:45
+    # cron 語法: '分 時 日 月 週'
+    # */15 代表每 15 分鐘一次
+    - cron: '*/15 1-5 * * 1-5' 
+  workflow_dispatch: # 允許手動按鈕觸發
 
 jobs:
   build:
@@ -22,6 +24,12 @@ jobs:
     - name: 安裝套件
       run: |
         pip install -r requirements.txt
+
+    - name: 執行監控程式
+      env:
+        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: python main.py
 
     - name: 執行監控程式
       env:
