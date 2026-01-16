@@ -1,10 +1,10 @@
 yfinance
 pandas
 matplotlib
-feedparser
 requests
-mplfinance
-pandas-ta
+feedparser
+mplfinance   <-- 新增這個！(專業金融繪圖)
+
 
 
 
