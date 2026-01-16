@@ -1,31 +1,42 @@
-name: 盤中即時監控 (15分K)
+name: Daily Stock Bot
 
 on:
+  # 1. 排程執行
   schedule:
-    # 台灣時間 09:00 ~ 13:45 對應 UTC 時間是 01:00 ~ 05:45
-    # */15 代表每 15 分鐘一次
-    - cron: '*/5 1-5 * * 1-5' 
-  workflow_dispatch: # 允許手動按鈕觸發
+    # 說明：GitHub 使用 UTC 時間
+    # 台灣時間 (UTC+8) 下午 13:15 = UTC 早上 05:15
+    # 設定：每天 05:15 執行 (週一到週五)
+    - cron: '45 4 * * 1-5'
+  
+  # 2. 手動觸發按鈕 (Workflow Dispatch)
+  # 讓你可以在 GitHub 網頁或手機 App 上按 "Run workflow" 立刻執行
+  workflow_dispatch:
 
 jobs:
   build:
     runs-on: ubuntu-latest
 
     steps:
-    - name: 下載程式碼
+    # 步驟 1: 下載你的程式碼
+    - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: 設定 Python 環境
+    # 步驟 2: 設定 Python 環境
+    # ⚠️ 關鍵：必須使用 3.10 以上，否則 yfinance 會報錯
+    - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: '3.12'
+        python-version: '3.10'
 
-    - name: 安裝套件
-      # 關鍵修正：加上 --pre 以允許安裝 pandas-ta 的 Beta 版
+    # 步驟 3: 安裝套件
+    - name: Install dependencies
       run: |
-        pip install -r requirements.txt --pre
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
 
-    - name: 執行監控程式
+    # 步驟 4: 執行機器人
+    # 這裡會讀取你在 Settings > Secrets 設定的密碼
+    - name: Run trading bot
       env:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
