@@ -3,7 +3,7 @@ pandas
 matplotlib
 requests
 feedparser
-mplfinance   <-- 新增這個！(專業金融繪圖)
+mplfinance
 
 
 
